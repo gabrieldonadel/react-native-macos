@@ -319,19 +319,20 @@ present (`macos/scripts/generate-codegen.sh`):
 
 ```
 252 upstream Objective-C sources
- 16 excluded from the macOS build (macos/UIKitCompat/macos-excludes.txt)
-236 checked
-182 parse cleanly against the macOS SDK
- 54 fail
-     16 blocked by a header the harness still cannot produce
-     38 blocked by a genuine macOS issue
+ 17 excluded from the macOS build (macos/UIKitCompat/macos-excludes.txt)
+235 checked
+218 parse cleanly against the macOS SDK
+ 17 fail
+      1 blocked by the harness (a Swift module it cannot build)
+     16 blocked by a genuine macOS issue
 ```
 
-Of the 220 files the harness can judge, **182 (83%) compile**.
+Of the 234 files the harness can judge, **218 (93%) compile**.
 
-Progression: 59 -> 80 -> 125 -> 134 -> 141 -> 151 -> 171 -> 182.
+Progression: 59 -> 80 -> 125 -> 134 -> 141 -> 151 -> 171 -> 182 -> 195 -> 207
+-> 215 -> 218.
 
-Five changes were worth far more than their size:
+Six changes were worth far more than their size:
 
 - **`UIStatusBarManager`.** macOS has no status bar, so the type is nearly
   meaningless -- but `RCTUtils.h` names it and almost everything imports
@@ -347,6 +348,21 @@ Five changes were worth far more than their size:
 - **A `MobileCoreServices` shim directory.** Same trick as `UIKit` -- the
   framework does not exist on macOS, the name is free, and the declarations
   live in CoreServices.
+- **The UIKit surface on an `NSObject` category.** UIKit declares accessibility
+  as an informal protocol on `NSObject`; AppKit's is a formal protocol adopted
+  by views. React Native stores accessibility elements as `NSObject *`.
+
+### The remaining 16
+
+Every one needs an upstream edit; none can be reached from a header.
+
+| Count | Blocker |
+|---:|---|
+| 2 | Touch and pointer handlers: `NSTouchTypeMask` and `NSGestureRecognizerState` conflict irreconcilably with UIKit's types of the same name (commit 9) |
+| 5 | Text input: `NSTextView` and `NSTextField` geometry and delegate shapes (commit 10) |
+| 2 | `UIWindow` is a `UIView` on iOS and `NSWindow` is not an `NSView` -- the same single-inheritance wall as section 4.5, in `RCTDeviceInfo` and `RCTInputAccessoryComponentView` |
+| 1 | `SCDynamicStoreCopyComputerName` needs SystemConfiguration, which iOS does not link |
+| 6 | Assorted: edit-menu interactions, presentation controllers, scroll-view touch delays |
 
 ### Comparison with react-native-macos
 
@@ -405,7 +421,7 @@ Three cases are genuinely rung 4 and will need upstream edits:
 
 ```
 MAX_UPSTREAM_FILES_TOUCHED = 90
-MAX_UPSTREAM_LINES_REMOVED = 50
+MAX_UPSTREAM_LINES_REMOVED = 200
 MAX_COMMITS                = 11
 ```
 
@@ -414,6 +430,12 @@ removes 1,870 lines.
 
 **Upstream files touched is the primary health metric of this fork.** Track it on every PR. If it
 climbs, the shim is being under-used and rung 4 is being over-used.
+
+The deletions limit started at 50 and was raised to 200 once real work landed.
+It turned out to be the wrong proxy: nearly every deletion is half of a `-1/+1`
+line replacement, such as `CADisplayLink *x` becoming `RCTPlatformDisplayLink *x`.
+No upstream code is being removed, and writing around the count would mean
+writing worse edits. The file count is what tracks rebase cost.
 
 ### 6.2 The linter
 
@@ -438,7 +460,7 @@ Every PR description states:
 
 ```
 Upstream files touched:  n / 90
-Upstream lines removed:  n / 50
+Upstream lines removed:  n / 200
 Commits:                 n / 11
 ```
 
