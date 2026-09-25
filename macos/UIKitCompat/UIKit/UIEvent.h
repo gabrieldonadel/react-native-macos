@@ -10,6 +10,19 @@
 
 #import <AppKit/AppKit.h>
 
+// The shim's compile-time names, which is all this layer is for.
+//
+// Deliberately aliases rather than real classes: registering a UIKit name
+// with the ObjC runtime makes Apple's own frameworks mistake the process for
+// Catalyst. macOS's one-time-code AutoFill does exactly that for the focused
+// text field, and answering yes sends it into UIKitMacHelper, which dlopens a
+// UIKit.framework that does not exist here and takes the process down.
+//
+// Forward-declared first so the aliases can appear before anything uses them.
+@class RCTUIKitCompatTouch;
+@compatibility_alias UITouch RCTUIKitCompatTouch;
+
+
 NS_ASSUME_NONNULL_BEGIN
 
 // UIEvent is an alias, not a subclass: AppKit hands NSEvents to us from the
@@ -39,7 +52,7 @@ typedef NS_ENUM(NSInteger, UITouchType) {
  * than in React Native. Keeping the translation inside the shim is what lets
  * RCTTouchHandler compile unmodified.
  */
-@interface UITouch : NSObject
+@interface RCTUIKitCompatTouch : NSObject
 
 @property (nonatomic, readonly) UITouchPhase phase;
 @property (nonatomic, readonly) UITouchType type;
@@ -59,6 +72,18 @@ typedef NS_ENUM(NSInteger, UITouchType) {
 - (CGFloat)azimuthAngleInView:(nullable NSView *)view;
 - (CGVector)azimuthUnitVectorInView:(nullable NSView *)view;
 @property (nonatomic, readonly) CGFloat maximumPossibleForce;
+
+/**
+ * The touch location in window coordinates, bottom-left origin -- AppKit's
+ * convention, not UIKit's.
+ *
+ * UITouch has no such member; -locationInView: is the UIKit spelling. It is
+ * here because react-native-macos makes its RCTUITouch an NSEvent subclass, so
+ * every module written against that fork reaches for NSEvent's
+ * -locationInWindow on a touch. react-native-gesture-handler does it in three
+ * places. The value is already captured at init, so exposing it costs nothing.
+ */
+@property (nonatomic, readonly) CGPoint locationInWindow;
 
 - (instancetype)initWithEvent:(NSEvent *)event phase:(UITouchPhase)phase view:(nullable NSView *)view;
 
