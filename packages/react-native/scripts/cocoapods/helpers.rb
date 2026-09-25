@@ -98,8 +98,14 @@ module Helpers
         # Returns glob patterns relative to packages/react-native, suitable for
         # a podspec's `osx.exclude_files`.
         def self.macos_excluded_files
-            list = File.join(__dir__, '..', '..', '..', '..', 'macos', 'UIKitCompat', 'macos-excludes.txt')
-            return [] unless File.exist?(list)
+            # Two layouts: the repo, where macos/ sits beside packages/, and an
+            # npm tarball, where macos/scripts/publish.sh has vendored macos/
+            # into the package. Try the package-relative path first.
+            list = [
+                File.join(__dir__, '..', '..', 'macos', 'UIKitCompat', 'macos-excludes.txt'),
+                File.join(__dir__, '..', '..', '..', '..', 'macos', 'UIKitCompat', 'macos-excludes.txt'),
+            ].find { |path| File.exist?(path) }
+            return [] if list.nil?
             # No filter_map: CocoaPods still runs on Ruby 2.6 on stock macOS.
             File.readlines(list).map do |line|
                 prefix = line.strip

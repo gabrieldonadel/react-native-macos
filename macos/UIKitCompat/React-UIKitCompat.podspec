@@ -5,7 +5,22 @@
 
 require "json"
 
-package = JSON.parse(File.read(File.join(__dir__, "..", "..", "packages", "react-native", "package.json")))
+# This podspec is used from two layouts and has to work in both:
+#
+#   in the repo      <repo>/macos/UIKitCompat          -> package.json is four
+#                                                         levels up
+#   in an npm tarball  node_modules/<pkg>/macos/UIKitCompat -> package.json is
+#                                                         two levels up
+#
+# macos/scripts/publish.sh vendors this directory into the package when it
+# publishes; nothing else about the layout changes.
+package_json = [
+  File.join(__dir__, "..", "..", "package.json"),
+  File.join(__dir__, "..", "..", "packages", "react-native", "package.json"),
+].find { |path| File.exist?(path) }
+raise "React-UIKitCompat: cannot locate the react-native package.json" if package_json.nil?
+
+package = JSON.parse(File.read(package_json))
 version = package['version']
 
 Pod::Spec.new do |s|
@@ -31,7 +46,8 @@ Pod::Spec.new do |s|
     "HEADER_SEARCH_PATHS" => "\"$(PODS_TARGET_SRCROOT)\"",
     "DEFINES_MODULE" => "YES"
   }
-  s.user_target_xcconfig   = {
-    "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/../../macos/UIKitCompat\""
-  }
+  # No user_target_xcconfig. The app reaches these headers through the
+  # `post_install` hook in its Podfile, which is required anyway to force-include
+  # RCTPlatformViewCompat.h. A path baked in here could only be correct for one
+  # of the two layouts above.
 end

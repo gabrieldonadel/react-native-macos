@@ -25,7 +25,7 @@ MAX_UPSTREAM_FILES_TOUCHED=90
 # being removed, and contorting to avoid it would mean writing worse edits.
 # Upstream *files touched* is the metric that actually tracks rebase cost.
 MAX_UPSTREAM_LINES_REMOVED=200
-MAX_COMMITS=11
+MAX_COMMITS=12
 
 if ! git rev-parse --verify --quiet "$UPSTREAM_REF" >/dev/null; then
   echo "error: cannot resolve upstream ref '$UPSTREAM_REF'." >&2
@@ -34,7 +34,15 @@ if ! git rev-parse --verify --quiet "$UPSTREAM_REF" >/dev/null; then
 fi
 
 # Paths this fork owns. Changes here are free; they never conflict on rebase.
-OURS=(':(exclude)macos/' ':(exclude)MACOS-FORK.md')
+#
+# GitHub requires workflows to live at .github/workflows/, so fork-owned ones
+# cannot sit under macos/ with everything else. They carry a `macos-` prefix
+# instead, which is what makes them recognisable here.
+OURS=(
+  ':(exclude)macos/'
+  ':(exclude)MACOS-FORK.md'
+  ':(exclude).github/workflows/macos-*.yml'
+)
 
 fail=0
 note() { printf '  %s\n' "$1"; }
@@ -144,6 +152,9 @@ fi
 
 # --- 6. no [macOS] markers inside our own directory ---------------------------
 
+# .github/workflows/macos-*.yml is excluded: a marker there is the only thing
+# that says the file is the fork's and not upstream's, since it cannot live
+# under macos/.
 ours_marked=$(git grep -l -E '\[macOS|macOS\]' -- macos/ 2>/dev/null \
   | grep -v '^macos/ci/check-budget.sh$' \
   | grep -v '^macos/UIKitCompat/README.md$' || true)

@@ -51,15 +51,34 @@ macos/                        Everything we own. Never conflicts on rebase.
   UIKitCompat/
     UIKit/                    The shim. Served on the header search path.
       UIKit.h                 Umbrella. Satisfies #import <UIKit/UIKit.h>.
-      UIView.h / .m
+      UIView.h / .m           Includes RCTPlatformView. See section 4.5.
       UIScrollView.h / .m
-      UIColor.h               Aliases and categories.
       ...
-  Host/                       NSApplication delegate, NSWindow, root view.
-  scripts/                    Hermes xcframework recomposition, build helpers.
-  ci/                         Budget linter.
+    MobileCoreServices/       Forwards to CoreServices, same trick as UIKit.
+    RCTPlatformViewCompat.h   Force-included prelude (-include).
+    macos-excludes.txt        Files the macOS build does not ship.
+    React-UIKitCompat.podspec
+  metro-config.js             Resolves macos -> ios -> shared for Metro.
+  HelloWorld/                 The AppKit host app. NSApplication, NSWindow.
+  scripts/
+    syntax-check.sh           The inner loop while porting.
+    generate-codegen.sh
+    publish.sh                npm publish without renaming the repo. See 2.6.
+  tests/
+    UIKitCompatTest.m         Behaviour, under -Werror.
+    check-no-self-recursion.py
+    run.sh
+  ci/check-budget.sh          Budget linter.
 MACOS-FORK.md                 This file.
+.github/workflows/
+  macos-publish.yml           Ours, despite the location. GitHub requires
+                              workflows here, so fork-owned ones are marked by
+                              a `macos-` prefix and excluded from the budget.
 ```
+
+`macos/UIKitCompat/` and `macos/metro-config.js` are the only two things a
+consuming app needs at runtime. `macos/scripts/publish.sh` vendors both into the
+npm package.
 
 Upstream stays where upstream put it. We add no top-level directories other than `macos/`.
 
@@ -107,6 +126,113 @@ upstream/v0.87.1  ──  macos/v0.87.1   (our commits, rebased — never merged
 
 **Rebase onto new upstream tags. Never merge.** Merging produces the snapshot-regeneration tax
 described in §2.2. Rebasing keeps the commit series readable and keeps the budget measurable.
+
+### 2.6 Publishing to npm
+
+**The package is not renamed in the repository. It is renamed at publish time.**
+
+Renaming in the tree would grow the diff against the upstream tag for no
+functional reason, and every rebase onto a new tag would conflict on it.
+`macos/scripts/publish.sh` does the rename, packs, verifies, and restores the
+tree. It is the only thing that knows the published name.
+
+Only one package needs publishing. All the fork's changes live in
+`packages/react-native`, and every one of its dependencies is an upstream
+`@react-native/*` package at an exact version that this fork does not touch.
+
+Three things the script has to do beyond rewriting `name`:
+
+1. Vendor `macos/UIKitCompat/` and `macos/metro-config.js` into the package.
+   npm cannot pack a path outside the package directory.
+2. Add `macos` to the `files` allowlist, and `./macos/metro-config` to
+   `exports`. `exports` is a gate: a subpath missing from it is unreachable
+   even when it is present in the tarball.
+3. Verify the tarball before anything leaves the machine -- in particular that
+   `scripts/cocoapods/helpers.rb` can still resolve `macos-excludes.txt`, which
+   is the one path that differs between the two layouts.
+
+`helpers.rb` and `React-UIKitCompat.podspec` both accept either layout, so
+nothing is patched during publish.
+
+**Consume the package under the upstream name**, with an npm alias:
+
+```json
+"dependencies": { "react-native": "npm:not-react-native-macos@0.87.1" }
+```
+
+npm installs the tarball at `node_modules/react-native`. That is required, not
+cosmetic: `@react-native/metro-config` hardcodes
+`require.resolve("react-native/setup-env")` and an `assetRegistryPath` of
+`"react-native/asset-registry"`, and `@react-native/assets-registry` imports
+from `'react-native'`. Those packages are upstream and unforked, so the
+*install path* is what has to match, not the published name. The alias also
+means an app cannot depend on this fork and upstream React Native at once --
+acceptable for a macOS-only app, and the same constraint react-native-macos has.
+
+#### Trusted publishing
+
+Publishing runs from `.github/workflows/macos-publish.yml` using npm trusted
+publishing (OIDC). **There is no `NPM_TOKEN`.** GitHub mints a short-lived token
+scoped to that one workflow, npm exchanges it for publish rights, and provenance
+attestations are generated automatically.
+
+Four things this depends on, each of which fails the publish if wrong:
+
+| Requirement | Where |
+|---|---|
+| `permissions: id-token: write` on the publishing job | `macos-publish.yml` |
+| npm >= 11.5.1, Node >= 22.14.0 | the workflow installs `npm@latest` |
+| `repository.url` matches the GitHub repo exactly | set by `publish.sh` |
+| The workflow **filename** matches the trusted-publisher setting | npmjs.com |
+
+The filename coupling is the sharp edge: the trusted publisher is registered
+against `macos-publish.yml` by name, so renaming or moving the workflow breaks
+publishing until the npm setting is updated to match.
+
+The configuration, already in place on npmjs.com under the package's
+Settings -> Trusted publishing:
+
+```
+Publisher          GitHub Actions
+Organization/user  gabrieldonadel
+Repository         react-native-macos
+Workflow filename  macos-publish.yml
+Environment        (empty)
+Allowed actions    npm publish, npm stage publish
+```
+
+`npm publish` has to be ticked explicitly; only `npm stage publish` is granted
+by default.
+
+**A trusted publisher cannot be configured for a package that does not exist
+yet** -- the settings page appears only once something has been published under
+the name. `not-react-native-macos` was seeded with a placeholder 0.0.1, so that
+step is behind us. It matters again only if the fork is ever republished under a
+different name, in which case the first version goes out manually with a token
+that is revoked straight after:
+
+```sh
+npm login
+./macos/scripts/publish.sh --publish --name <new-name>
+```
+
+Self-hosted runners are not supported, and provenance is not generated for
+private repositories.
+
+#### The name
+
+`not-react-native-macos`, because npm rejects anything whose name, lowercased
+and stripped of `.`, `_` and `-`, lands within one character of an existing
+package. That is a typo-squatting guard, and it is why the obvious names are
+gone:
+
+```
+react-native-appkit  -> reactnativeappkit   collides with react-native-app-kit
+react-native-osx     -> reactnativeosx      one character from react-native-os
+```
+
+Neither blocker has anything to do with macOS. A scoped name would sidestep the
+check entirely if a better one is ever wanted.
 
 ---
 
@@ -308,8 +434,9 @@ tag replays them instantly and stops only at the handful of commits that touch u
 | 8 | `build: make the CocoaPods graph install for :osx [macOS]` | Yes | 6 | **landed** |
 | 9 | `fix(macos): close the gaps the shim cannot reach [macOS]` | Yes | 9 | **landed** |
 | 10 | `feat(macos): add the AppKit host app` | No — all `macos/` | 0 | **landed** |
+| 11 | `build(macos): publish to npm without renaming the package` | Yes | 1 | **landed** |
 
-Eleven commits, 48 upstream files. The series diverged from the original plan
+Twelve commits, 48 upstream files. The series diverged from the original plan
 in one direction only: the planned per-pod commits (React-Core, React-Fabric,
 coordinate semantics, touch synthesis, TextInput) collapsed into commits 8 and
 9, because aliasing `UIView` to `NSView` removed most of what they were for.
@@ -487,8 +614,13 @@ again.
 ```
 MAX_UPSTREAM_FILES_TOUCHED = 90
 MAX_UPSTREAM_LINES_REMOVED = 200
-MAX_COMMITS                = 11
+MAX_COMMITS                = 12
 ```
+
+`MAX_COMMITS` was 11 and became 12 when npm publishing landed. The cap exists to
+stop `wip` churn from accumulating, not to stop a new concern from getting its
+own commit. Raise it when a genuinely separate concern needs a place; squash
+when the history is just iteration.
 
 For reference, `react-native-macos` at `0.81-stable` touches 603 files in `packages/react-native` and
 removes 1,870 lines.
@@ -498,7 +630,7 @@ Current reading, with the app rendering:
 ```
 Upstream files touched:  48 / 90
 Upstream lines removed:  79 / 200
-Commits:                 11 / 11
+Commits:                 12 / 12
 ```
 
 **Upstream files touched is the primary health metric of this fork.** Track it on every PR. If it
@@ -534,7 +666,7 @@ Every PR description states:
 ```
 Upstream files touched:  n / 90
 Upstream lines removed:  n / 200
-Commits:                 n / 11
+Commits:                 n / 12
 ```
 
 ---
